@@ -42,17 +42,26 @@ with gr.Blocks() as demo:
             selected_points = gr.State([])
             masks = gr.State([])
 
-            with gr.Row().style(equal_height=True):
+            with gr.Row(equal_height=True):
                 undo_points_button = gr.Button("Undo point")
                 reset_points_button = gr.Button("Reset points")
                 segment_button = gr.Button("Generate mask")
 
-
-
     def store_original_image(image):
-        return image, [] # reset the selected_points
+        if image is not None:
+            # Convert image to numpy array if it's not already
+            if isinstance(image, Image.Image):
+                image = np.array(image)
+            elif isinstance(image, str):
+                image = np.array(Image.open(image))
+            
+            # Ensure the image is in RGB format
+            if image.shape[2] == 4:  # RGBA
+                image = image[:,:,:3]
+            elif len(image.shape) == 2:  # Grayscale
+                image = np.stack((image,)*3, axis=-1)
+        return image, []  # return processed image and reset selected_points
     
-
     def point_selection(image, selected_points, evt: gr.SelectData):
         selected_points.append(evt.index)
         print(selected_points)
@@ -61,12 +70,10 @@ with gr.Blocks() as demo:
             cv2.drawMarker(image, point, colors, markerSize=20, thickness=15)
         if image[..., 0][0, 0] == image[..., 2][0, 0]:  # BGR to RGB
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
         return Image.fromarray(image) 
     
     def undo_points(original_image, selected_points):
         temp = original_image.copy()
-
         if len(selected_points) != 0:
             selected_points.pop()
             for point in selected_points:
@@ -74,28 +81,32 @@ with gr.Blocks() as demo:
                 
         if temp[..., 0][0, 0] == temp[..., 2][0, 0]:  # BGR to RGB
             temp = cv2.cvtColor(temp, cv2.COLOR_BGR2RGB)
-
         return Image.fromarray(temp) 
     
-
     def reset_points(original_image):
-
         return original_image, []
     
-
     def generate_mask(image, selected_points):
-        input_points = []
-        for x,y in (selected_points):
-            input_points.append(x)
-            input_points.append(y)
+        if not selected_points:
+            return image  # Return original image if no points selected
+        # Set the image for the predictor
         predictor.set_image(image)
-        input_points = np.array(input_points)
+        input_points = np.array(selected_points)
+        input_labels = np.ones(len(selected_points))  # Assuming all points are foreground
+        if len(selected_points) == 1:
+            # If only one point, use it as both start and end of bounding box
+            input_box = np.array([selected_points[0][0], selected_points[0][1], selected_points[0][0], selected_points[0][1]])
+        else:
+            # If two or more points, use the first and last to create a bounding box
+            x_coords, y_coords = zip(*selected_points)
+            input_box = np.array([min(x_coords), min(y_coords), max(x_coords), max(y_coords)])
         masks, _, _ = predictor.predict(
-            box=input_points,
-            multimask_output=False
+            point_coords=input_points,
+            point_labels=input_labels,
+            box=input_box[None, :],
+            multimask_output=False,
         )
-        mask =  Image.fromarray(masks[0])
-        
+        mask = Image.fromarray(masks[0].astype('uint8') * 255)
         return mask
 
     input_img.upload(
@@ -128,4 +139,7 @@ with gr.Blocks() as demo:
     )
 
     if __name__ == "__main__":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        sam_lora.sam.to(device)
+        predictor = SamPredictor(sam_lora.sam)
         demo.launch(share=True)
