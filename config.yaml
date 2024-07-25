@@ -4,7 +4,7 @@ DATASET:
   IMAGE_FORMAT: ".png"
 
 SAM:
-  CHECKPOINT: "./sam_vit_b_01ec64.pth"
+  CHECKPOINT: "./models/sam_vit_b_01ec64.pth"
   RANK: 512
 
 TRAIN:
